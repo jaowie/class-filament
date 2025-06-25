@@ -347,7 +347,8 @@ class LivestockResource extends Resource
                     
                 ])
                 ->with(['owner'])
-                ->groupBy(['owner_id', 'batch']);
+                ->groupBy(['owner_id', 'batch'])
+                ->orderBy('delivered_at', 'desc');
         } catch (\Throwable $e) {
             report($e); 
             return Livestock::query()->whereRaw('0 = 1');

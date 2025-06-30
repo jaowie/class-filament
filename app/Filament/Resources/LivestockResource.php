@@ -3,10 +3,11 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\LivestockResource\Pages;
-use App\Filament\Resources\LivestockResource\RelationManagers;
 use App\Models\Livestock;
 use App\Models\Owner;
 use App\Models\AccountCode;
+use App\Models\Handler;
+use App\Models\HandlerPlateNumber;
 use Carbon\Carbon;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -14,25 +15,16 @@ use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\SoftDeletingScope;// Import Toggle for the switch
-use Filament\Forms\Get; 
-use Filament\Forms\Set; 
-use Filament\Forms\Components\{Select, TextInput, Toggle, Repeater, Actions, DatePicker, TimePicker, Hidden, Grid};
+use Filament\Forms\Components\{Select, TextInput, DatePicker, TimePicker, Hidden, Grid};
 use Filament\Forms\Components\Wizard;
 use Filament\Forms\Components\Placeholder;
-use App\Models\Delivery; // Import the Delivery model
-use App\Models\OwnerLivestockBatch;
-use App\Services\OrderOfPaymentService;
-use Filament\Actions\Action;
 use Filament\Notifications\Notification;
-use Filament\Tables\Actions\ViewAction;
 use Illuminate\Support\Str;
-use Filament\Tables\Grouping\Group;
-use Illuminate\Container\Attributes\Log;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Route;
+use Filament\Forms\Components\Actions\Action;
+use Filament\Forms\Components\Group;
+use Filament\Tables\Actions\Action as ActionsAction;
 
 class LivestockResource extends Resource
 {
@@ -42,14 +34,77 @@ class LivestockResource extends Resource
 
     public static function form(Form $form): Form
     {
+        $initialStep = request()->query('step', 1); // default to 1 if not set
         return $form
             ->schema([
+                Placeholder::make('session_summary')
+                    ->content(function () {
+                        $handlerId = session('handler_id');
+                        $plateId = session('handler_plate_number_id');
+
+                        if (!$handlerId || !$plateId) {
+                            return ''; // Don't show anything if session not set
+                        }
+
+                        $handler = Handler::find($handlerId);
+                        $plate = HandlerPlateNumber::find($plateId);
+
+                        if (!$handler || !$plate) {
+                            return '';
+                        }
+
+                        return "### Handler: {$handler->name} | Plate Number: {$plate->plate_no}";
+                    })
+            ->columnSpanFull(),
                 Wizard::make([
+                    Wizard\Step::make('Select Handler & Plate Number')
+                        ->schema([
+                            Select::make('handler_id')
+                                ->label('Handler')
+                                ->relationship('handler', 'name')
+                                ->default(session('handler_id'))
+                                ->searchable()
+                                ->preload()
+                                ->required()
+                                ->reactive()
+                                ->afterStateUpdated(function ($state) {
+                                    session(['handler_id' => $state]);
+                                    // session()->forget('handler_plate_number_id');
+                                }),
+
+                            Select::make('handler_plate_number_id')
+                                ->label('Plate Number')
+                                ->default(session('handler_plate_number_id'))
+                                ->options(function (callable $get) {
+                                    $handlerId = $get('handler_id');
+                                    if (!$handlerId) return [];
+
+                                    return HandlerPlateNumber::where('handler_id', $handlerId)
+                                        ->pluck('plate_no', 'id')
+                                        ->toArray();
+                                })
+                                ->required()
+                                ->createOptionForm([
+                                    TextInput::make('plate_no')->required(),
+                                ])
+                                ->createOptionUsing(function (array $data, callable $get) {
+                                    return HandlerPlateNumber::create([
+                                        'plate_no' => $data['plate_no'],
+                                        'handler_id' => $get('handler_id'),
+                                    ])->id;
+                                })
+                                ->afterStateUpdated(function ($state) {
+                                    session(['handler_plate_number_id' => $state]);
+                                }),
+
+                        ]),
+
                     Wizard\Step::make('Livestock Details')
                         ->schema([
                             Select::make('owner_id')
                                 ->relationship('owner', 'first_name')
                                 ->label('Owner')
+                                ->getOptionLabelFromRecordUsing(fn ($record) => $record->first_name.' '.$record->last_name . ' - ' . $record->address)
                                 ->searchable()
                                 ->preload()
                                 ->createOptionForm([
@@ -60,18 +115,13 @@ class LivestockResource extends Resource
                                 ])
                                 ->createOptionUsing(fn (array $data): int => \App\Models\Owner::create($data)->id)
                                 ->required()
-                                ->live() 
+                                ->live()
                                 ->afterStateUpdated(function ($state, callable $set) {
-                                    $owner = Owner::find($state);
-                                    if ($owner) {
-                                        $set('owner_name', $owner->first_name . ' ' . $owner->last_name);
-                                    } else {
-                                        $set('owner_name', null);
-                                    }
-                                })
-                                ->dehydrated(true), 
-                            Hidden::make('owner_name')
-                                ->dehydrated(false),
+                                    $owner = \App\Models\Owner::find($state);
+                                    $set('owner_name', $owner?->first_name . ' ' . $owner?->last_name);
+                                }),
+
+                            Hidden::make('owner_name')->dehydrated(false),
 
                             Select::make('type')
                                 ->required()
@@ -81,45 +131,30 @@ class LivestockResource extends Resource
                                     'Cattle' => 'Cattle',
                                 ])
                                 ->native(false)
-                                ->searchable()
-                                ->dehydrated(true),
+                                ->searchable(),
 
                             TextInput::make('quantity')
                                 ->label('Quantity of Livestock')
                                 ->numeric()
                                 ->minValue(1)
                                 ->required()
-                                ->live()
-                                ->dehydrated(true),
-
-                            Select::make('handler_id')
-                                ->relationship('handler', 'name')
-                                ->searchable()
-                                ->preload()
-                                ->required()
-                                ->dehydrated(true),
+                                ->live(),
 
                             DatePicker::make('date_of_delivery')
                                 ->required()
                                 ->native(false)
-                                ->dehydrated(true)
                                 ->live(),
 
                             TimePicker::make('time_of_delivery')
-                                ->required()
-                                ->dehydrated(true),
+                                ->required(),
 
-                            // Place of origin
                             TextInput::make('origin')
                                 ->label('Place of Origin')
                                 ->maxLength(255)
-                                ->required()
-                                ->dehydrated(true),
+                                ->required(),
 
-                            // Remarks
                             TextInput::make('remarks')
-                                ->maxLength(255)
-                                ->dehydrated(true),
+                                ->maxLength(255),
                         ]),
 
                     Wizard\Step::make('Confirm Livestock Codes')
@@ -137,10 +172,10 @@ class LivestockResource extends Resource
                                     }
 
                                     $codes = self::generateLivestockCodes(
-                                        $ownerName,
-                                        $quantity,
-                                        $dateOfDelivery
-                                    );
+                                                $ownerName,
+                                                $quantity,
+                                                $dateOfDelivery
+                                            );
 
                                     $set('livestock_codes', $codes);
 
@@ -148,19 +183,20 @@ class LivestockResource extends Resource
                                 }),
 
                             Hidden::make('livestock_codes')
-                                ->dehydrated(true),
                         ]),
                 ])
-                ->skippable(false)
-                ->contained()
-                ->columns(2)
-                ->columnSpanFull()  
-                ->submitAction(
-                    \Filament\Forms\Components\Actions\Action::make('create')
-                        ->label('Create Livestock Entries')
-                        ->submit('livestock-details')
-                        ->keyBindings(['mod+s'])
-                )
+                    ->startOnStep($initialStep)
+                    ->skippable(false)
+                    ->contained()
+                    ->columns(2)
+                    ->columnSpanFull()
+                    ->submitAction(
+                        \Filament\Forms\Components\Actions\Action::make('create')
+                            ->label('Create Livestock Entries')
+                            ->submit('livestock-wizard')
+                            ->keyBindings(['mod+s'])
+                            ->action('create')
+                    ),
             ]);
     }
 
@@ -179,22 +215,22 @@ class LivestockResource extends Resource
                     ->html()
                     ->getStateUsing(function ($record) {
                         $status = $record->status ?? Livestock::where('owner_id', $record->owner_id)
-                                                        ->where('batch', $record->batch)
-                                                        ->value('status');
-                        
+                            ->where('batch', $record->batch)
+                            ->value('status');
+
                         $count = $record->livestock_count ?? Livestock::where('owner_id', $record->owner_id)
-                                                                ->where('batch', $record->batch)
-                                                                ->count();
-                        
+                            ->where('batch', $record->batch)
+                            ->count();
+
                         if (empty($status)) return '';
-                        
+
                         $colors = [
                             'received' => ['bg' => '#3b82f6', 'text' => '#ffffff'],
                             'OP Generated' => ['bg' => '#eab308', 'text' => '#000000'],
                         ];
-                        
+
                         $style = $colors[$status] ?? ['bg' => '#6b7280', 'text' => '#ffffff'];
-                        
+
                         return "
                             <div style='
                                 background-color: {$style['bg']};
@@ -209,128 +245,119 @@ class LivestockResource extends Resource
                                 {$status} <span style='font-weight: bold'>{$count}</span>
                             </div>
                         ";
-                    }),
-                Tables\Columns\TextColumn::make('type')
-                    ->label('Type')
-                    ->searchable(),
-                Tables\Columns\TextColumn::make('delivered_at')
-                    ->label('Delivered At')
-                    ->date() 
-                    ->sortable(),
-                Tables\Columns\TextColumn::make('created_at')
-                    ->label('Date Created')
-                    ->dateTime()
-                    ->sortable(),
+                }),
+            Tables\Columns\TextColumn::make('type')
+                ->label('Type')
+                ->searchable(),
+            Tables\Columns\TextColumn::make('delivered_at')
+                ->label('Delivered At')
+                ->date()
+                ->sortable(),
+            Tables\Columns\TextColumn::make('created_at')
+                ->label('Date Created')
+                ->dateTime()
+                ->sortable(),
             ])
-                ->actions([
-                    Tables\Actions\Action::make('view_batch')
-                        ->label('View Batch')
-                        ->icon('heroicon-o-eye')
-                        ->url(fn ($record) => static::getUrl('view-livestock-batch', [
-                            'owner' => $record->owner->uuid,
-                            'batch' => $record->batch,
-                        ])),
-                    Tables\Actions\Action::make('add_order_of_payment')
-                        ->label('Add Order of Payment')
-                        ->icon('heroicon-o-document-plus')
-                        ->modalHeading('Add Order of Payment')
-                            ->closeModalByClickingAway(false)
-                        ->form([
-                            Forms\Components\ToggleButtons::make('purpose')
-                                ->label('Purpose')
-                                ->options([
-                                    'slaughter' => 'For Slaughter',
-                                    'others' => 'Others',
-                                ])
-                                ->default('slaughter') 
-                                ->inline()   // puts them side-by-side
-                                ->required(),
+            ->actions([
+                Tables\Actions\Action::make('view_batch')
+                    ->label('View Batch')
+                    ->icon('heroicon-o-eye')
+                    ->url(fn ($record) => static::getUrl('view-livestock-batch', [
+                        'owner' => $record->owner->uuid,
+                        'batch' => $record->batch,
+                    ])),
 
-                            Select::make('account_codes')
-                                ->label('Account Codes')
-                                ->multiple()
-                                ->searchable()
-                                ->options(
-                                    AccountCode::all()->pluck('description', 'account_code')
-                                )
-                                ->required(),
-                            Forms\Components\Textarea::make('remarks'),
-                        ])
-                        ->action(function (array $data, $record, $action) {
-                            $livestock = Livestock::where('owner_id', $record->owner_id)
-                                    ->where('batch', $record->batch)
-                                    ->get()
-                                    ->map(fn ($item) => [
-                                        'id' => $item->id,
-                                        'type' => $item->type,
-                                        'batch' => $item->batch,
-                                    ])
-                                    ->toArray();
+                Tables\Actions\Action::make('add_order_of_payment')
+                    ->label('Add Order of Payment')
+                    ->icon('heroicon-o-document-plus')
+                    ->modalHeading('Add Order of Payment')
+                    ->closeModalByClickingAway(false)
+                    ->form([
+                        Forms\Components\ToggleButtons::make('purpose')
+                            ->label('Purpose')
+                            ->options([
+                                'slaughter' => 'For Slaughter',
+                                'others' => 'Others',
+                            ])
+                            ->default('slaughter')
+                            ->inline()
+                            ->required(),
 
-                                // Format account codes (id => description)
-                            $accountCodes = collect($data['account_codes'])->mapWithKeys(function ($code) {
-                                $code = AccountCode::where('account_code', $code)->first(); // Fetch the actual model
-                                
-                                return [$code->account_code => $code->description];
-                            })->toArray();
+                        Select::make('account_codes')
+                            ->label('Account Codes')
+                            ->multiple()
+                            ->searchable()
+                            ->options(
+                                AccountCode::all()->pluck('description', 'account_code')
+                            )
+                            ->required(),
 
-                            // Build final payload
-                            $payload = (object) [
-                                'account_codes' => $accountCodes,
-                                'owner_id' => $record->owner_id,
-                                'purpose' => $data['purpose'],
-                                'livestock' => $livestock,
-                                'remarks' => $data['remarks'] ?? null,
-                            ];
+                        Forms\Components\Textarea::make('remarks'),
+                    ])
+                    ->action(function (array $data, $record, ActionsAction $action) {
+                        $livestock = Livestock::where('owner_id', $record->owner_id)
+                            ->where('batch', $record->batch)
+                            ->get()
+                            ->map(fn ($item) => [
+                                'id' => $item->id,
+                                'type' => $item->type,
+                                'batch' => $item->batch,
+                            ])
+                            ->toArray();
 
-                            $OPReview = app(\App\Services\OrderOfPaymentService::class);
-                            $reviewData = $OPReview->reviewOP($payload);
+                        $accountCodes = collect($data['account_codes'])->mapWithKeys(function ($code) {
+                            $code = AccountCode::where('account_code', $code)->first();
+                            return [$code->account_code => $code->description];
+                        })->toArray();
 
-                           // Store the payload in the action for later use
-                            $action->payload = $payload;
+                        $payload = (object) [
+                            'account_codes' => $accountCodes,
+                            'owner_id' => $record->owner_id,
+                            'purpose' => $data['purpose'],
+                            'livestock' => $livestock,
+                            'remarks' => $data['remarks'] ?? null,
+                        ];
 
-                            // Open modal with preview and confirmation button
-                            $action->modalContent(view('filament.components.op-preview', [
-                                'data' => $reviewData
-                            ])->render());
+                        $OPReview = app(\App\Services\OrderOfPaymentService::class);
+                        $reviewData = $OPReview->reviewOP($payload);
 
-                            $action->modalSubmitActionLabel('Confirm and Create Order of Payment')
-                                ->modalWidth('4xl')
-                                ->modalHeading('Order of Payment Preview')
-                                ->extraModalFooterActions([
-                                    Action::make('cancel')
-                                        ->color('gray')
-                                        ->label('Cancel')
-                                        ->cancel()
-                                ]);
-                        })
-                        ->modalSubmitAction(fn (Action $action) => 
-                            Action::make('confirm')
-                                ->label('Confirm and Create Order of Payment')
-                                ->action(function () use ($action) {
-                                    dd(1);
-                                    $OPReview = app(\App\Services\OrderOfPaymentService::class);
-                                    // $result = $OPReview->processOP($action->payload);
-                                    
-                                    if ($result) {
-                                        Notification::make()
-                                            ->title('Order of Payment created successfully')
-                                            ->success()
-                                            ->send();
-                                        
-                                        // Optionally redirect
-                                        return redirect()->route('filament.resources.order-of-payments.index');
-                                    } else {
-                                        Notification::make()
-                                            ->title('Failed to create Order of Payment')
-                                            ->danger()
-                                            ->send();
-                                    }
-                                })
-                        )
-                ]);
+                        $action
+                            ->modalContent(view('filament.components.op-preview', [
+                                'data' => $reviewData,
+                            ]))
+                            ->modalSubmitActionLabel('Confirm and Create Order of Payment')
+                            ->modalHeading('Order of Payment Preview')
+                            ->modalWidth('4xl')
+                            ->extraModalFooterActions([
+                                Action::make('cancel')
+                                    ->color('gray')
+                                    ->label('Cancel')
+                                    ->cancel(),
+                            ])
+                            ->action(function () use ($payload) {
+                                dd(1); // Debug — remove once working
+
+                                $OPReview = app(\App\Services\OrderOfPaymentService::class);
+                                $result = $OPReview->processOP($payload);
+
+                                if ($result) {
+                                    Notification::make()
+                                        ->title('Order of Payment created successfully')
+                                        ->success()
+                                        ->send();
+
+                                    return redirect()->route('filament.resources.order-of-payments.index');
+                                } else {
+                                    Notification::make()
+                                        ->title('Failed to create Order of Payment')
+                                        ->danger()
+                                        ->send();
+                                }
+                            });
+                    }),
+            ]);
     }
-
+    
     public static function getEloquentQuery(): Builder
     {
         try {
@@ -388,8 +415,10 @@ class LivestockResource extends Resource
 
         $formattedDate = Carbon::parse($dateOfDelivery)->format('Ymd');
 
+        $milliseconds = substr((string) microtime(true), -3);
+
         for ($i = 1; $i <= $quantity; $i++) {
-            $codes[] = "{$ownerInitials}-{$formattedDate}-" . str_pad($i, 3, '0', STR_PAD_LEFT);
+            $codes[] = "{$ownerInitials}-{$milliseconds}{$formattedDate}-" . str_pad($i, 3, '0', STR_PAD_LEFT);
         }
 
         return $codes;

@@ -15,8 +15,7 @@ return new class extends Migration
             $table->id();
             $table->uuid();
             $table->string('name');
-            $table->string('plate_no');
-                    
+
             $table->timestamps();
             $table->softDeletes();
         });

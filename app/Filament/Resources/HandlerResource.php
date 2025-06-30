@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\HandlerResource\Pages;
 use App\Filament\Resources\HandlerResource\RelationManagers;
+use App\Filament\Resources\HandlerResource\RelationManagers\PlateNumbersRelationManager;
 use App\Models\Handler;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -21,15 +22,13 @@ class HandlerResource extends Resource
 
     public static function form(Form $form): Form
     {
-        return $form
-            ->schema([
-                Forms\Components\TextInput::make('name')
-                    ->required()
-                    ->maxLength(255),
-                Forms\Components\TextInput::make('plate_no')
-                    ->required()
-                    ->maxLength(255),
-            ]);
+    return $form
+        ->schema([
+            Forms\Components\TextInput::make('name')
+                ->required()
+                ->maxLength(255),
+                
+        ]);
     }
 
     public static function table(Table $table): Table
@@ -37,8 +36,6 @@ class HandlerResource extends Resource
         return $table
             ->columns([
                 Tables\Columns\TextColumn::make('name')
-                    ->searchable(),
-                Tables\Columns\TextColumn::make('plate_no')
                     ->searchable(),
                 Tables\Columns\TextColumn::make('created_at')
                     ->dateTime()
@@ -53,6 +50,7 @@ class HandlerResource extends Resource
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
+            ->defaultSort('created_at', 'desc')
             ->filters([
                 //
             ])
@@ -65,7 +63,7 @@ class HandlerResource extends Resource
     public static function getRelations(): array
     {
         return [
-            //
+            PlateNumbersRelationManager::class
         ];
     }
 

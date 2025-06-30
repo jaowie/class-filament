@@ -34,6 +34,7 @@ class Livestock extends Model
         'owner_id',
         'delivery_id',
         'handler_id',
+        'handler_plate_number_id',
     ];
 
     public function handler(): BelongsTo
@@ -69,5 +70,10 @@ class Livestock extends Model
     public function ownerLivestockBatch()
     {
         return $this->belongsTo(OwnerLivestockBatch::class, 'batch', 'batch');
+    }
+
+    public function plateNumber()
+    {
+        return $this->belongsTo(HandlerPlateNumber::class, 'handler_plate_number_id');
     }
 }

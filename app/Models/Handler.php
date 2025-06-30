@@ -15,4 +15,9 @@ class Handler extends Model
         'name',
         'plate_no'
     ];
+
+    public function plateNumbers()
+    {
+        return $this->hasMany(HandlerPlateNumber::class);
+    }
 }

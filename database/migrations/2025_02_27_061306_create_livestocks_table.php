@@ -30,12 +30,14 @@ return new class extends Migration
             $table->unsignedBigInteger('delivery_id');
             $table->unsignedBigInteger('inspector_id')->nullable();
             $table->unsignedBigInteger('order_of_payment_id')->nullable();
+            $table->unsignedBigInteger('handler_plate_number_id');
 
             $table->timestamps();
             $table->softDeletes();
 
             $table->foreign('handler_id')->references('id')->on('handlers')->onUpdate('cascade')->onDelete('cascade');
             $table->foreign('delivery_id')->references('id')->on('deliveries')->onUpdate('cascade')->onDelete('cascade');
+            $table->foreign('handler_plate_number_id')->references('id')->on('handler_plate_numbers')->onUpdate('cascade')->onDelete('cascade');
             $table->foreign('inspector_id')->references('id')->on('inspectors')->onUpdate('cascade')->onDelete('cascade');
             $table->foreign('owner_id')->references('id')->on('owners')->onUpdate('cascade')->onDelete('cascade');
 

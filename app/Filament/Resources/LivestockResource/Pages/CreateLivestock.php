@@ -2,24 +2,63 @@
 
 namespace App\Filament\Resources\LivestockResource\Pages;
 
-use App\Filament\CreateAndCreateAnother;
+use App\Filament\CreateAndSkipStepOne;
 use App\Filament\Resources\LivestockResource;
 use App\Models\Delivery;
 use App\Models\OwnerLivestockBatch;
+use Filament\Notifications\Notification;
 use Illuminate\Support\Facades\DB;
+use Filament\Support\Facades\FilamentView;
 
-class CreateLivestock extends CreateAndCreateAnother
+class CreateLivestock extends CreateAndSkipStepOne
 {
     protected static string $resource = LivestockResource::class;
+
+    public function mount(): void
+    {
+        parent::mount();
+    }
 
     protected function getFormActions(): array
     {
         return [];
     }
-
+    
     protected function getCreatedNotificationTitle(): ?string
     {
         return 'Livestock Created Successfully';
+    }
+
+    public function create(bool $another = false): void
+    {
+        try {
+            $data = $this->form->getState();
+
+            session([
+                'handler_id' => $data['handler_id'],
+                'handler_plate_number_id' => $data['handler_plate_number_id'],
+            ]);
+
+            $record = $this->handleRecordCreation($data);
+            
+
+            Notification::make()
+                ->title('Livestock entries created successfully.')
+                ->success()
+                ->send();
+
+    
+
+            $this->redirect($this->getRedirectUrl());
+        } catch (\Throwable $e) {
+            report($e);
+
+            Notification::make()
+                ->title('Error creating livestock.')
+                ->danger()
+                ->body($e->getMessage())
+                ->send();
+        }
     }
 
     protected function handleRecordCreation(array $data): \Illuminate\Database\Eloquent\Model
@@ -33,6 +72,7 @@ class CreateLivestock extends CreateAndCreateAnother
             $livestockCodes = $data['livestock_codes'] ?? [];
             $livestockType = $data['type'];
             $remarks = $data['remarks'];
+            $handlerPlateId = $data['handler_plate_number_id'];
 
             $delivery = Delivery::create([
                 'handler_id' => $handlerId,
@@ -43,8 +83,7 @@ class CreateLivestock extends CreateAndCreateAnother
 
             $batch = null;
             $ownerLivestockBatch = null;
-
-            // Check for existing livestock batches for this owner
+            
             $existingLivestockBatches = OwnerLivestockBatch::where('owner_id', $ownerId)->get();
 
             if ($existingLivestockBatches->isEmpty()) {
@@ -66,23 +105,22 @@ class CreateLivestock extends CreateAndCreateAnother
                 'batch' => $batch,
             ]);
 
-            $createdLivestockRecords = collect(); // Collection to hold created livestock models
+            $createdLivestockRecords = collect();
             foreach ($livestockCodes as $code) {
                 $livestock = $this->getModel()::create([
                     'type' => $livestockType,
                     'code' => $code,
-                    'status' => 'received', // Default status for new livestock entries
+                    'status' => 'received',
                     'remarks' => $remarks,
                     'owner_id' => $ownerId,
-                    'batch' => $batch, // Link to the determined batch
+                    'batch' => $batch,
                     'handler_id' => $handlerId,
                     'delivery_id' => $delivery->id,
+                    'handler_plate_number_id' => $handlerPlateId,
                 ]);
                 $createdLivestockRecords->push($livestock);
             }
 
-            // Filament's CreateRecord expects an Eloquent model back.
-            // Return the first created livestock record or a new instance if none were created.
             return $createdLivestockRecords->first() ?? new ($this->getModel());
         });
     }

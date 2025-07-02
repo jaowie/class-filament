@@ -20,19 +20,24 @@ use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\StartSession;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
+use Filament\Support\View\Components\Modal;
 
 class AdminPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
+        Modal::closedByClickingAway(false);
         Notifications::alignment(Alignment::Center);
         return $panel
+            ->brandName('CLASS')
+->brandLogo(fn () => view('filament.components.DC-logo'))
+ ->brandLogoHeight('3rem')
             ->default()
             ->id('admin')
             ->path('admin')
             ->login()
             ->colors([
-                'primary' => Color::Amber,
+                'primary' => '#000080',
             ])
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')

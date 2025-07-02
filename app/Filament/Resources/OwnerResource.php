@@ -17,33 +17,38 @@ class OwnerResource extends Resource
 {
     protected static ?string $model = Owner::class;
 
-    protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
+    protected static ?string $navigationIcon = 'heroicon-o-user-group';
 
-public static function form(Form $form): Form
-{
-    return $form
-        ->schema([
-            Forms\Components\Grid::make(3)
-                ->schema([
-                    Forms\Components\TextInput::make('first_name')
-                        ->required()
-                        ->maxLength(255),
+    public static function getNavigationGroup(): ?string
+    {
+        return 'Profile Management';
+    }
 
-                    Forms\Components\TextInput::make('middle_name')
-                        ->maxLength(255)
-                        ->default(null),
+    public static function form(Form $form): Form
+    {
+        return $form
+            ->schema([
+                Forms\Components\Grid::make(3)
+                    ->schema([
+                        Forms\Components\TextInput::make('first_name')
+                            ->required()
+                            ->maxLength(255),
 
-                    Forms\Components\TextInput::make('last_name')
-                        ->required()
-                        ->maxLength(255),
+                        Forms\Components\TextInput::make('middle_name')
+                            ->maxLength(255)
+                            ->default(null),
 
-                    Forms\Components\TextInput::make('address')
-                        ->maxLength(255)
-                        ->default(null)
-                        ->columnSpan(3), // ✅ spans full width (all 3 columns)
-                ]),
-        ]);
-}
+                        Forms\Components\TextInput::make('last_name')
+                            ->required()
+                            ->maxLength(255),
+
+                        Forms\Components\TextInput::make('address')
+                            ->maxLength(255)
+                            ->default(null)
+                            ->columnSpan(3), // ✅ spans full width (all 3 columns)
+                    ]),
+            ]);
+    }
 
 
     public static function table(Table $table): Table

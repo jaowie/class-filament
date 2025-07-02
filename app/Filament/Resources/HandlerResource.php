@@ -18,7 +18,12 @@ class HandlerResource extends Resource
 {
     protected static ?string $model = Handler::class;
 
-    protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
+    protected static ?string $navigationIcon = 'heroicon-o-user-group';
+    
+    public static function getNavigationGroup(): ?string
+    {
+        return 'Profile Management';
+    }
 
     public static function form(Form $form): Form
     {

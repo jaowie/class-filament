@@ -54,10 +54,10 @@ class OrderOfPaymentService extends BaseService
 
             $payload['op_no'] = $this->generateOPNumber();
 
-            $payload['status'] = 'Draft';
-            if (auth()->user()->hasRole('CVO')) {
+            // $payload['status'] = 'Draft';
+            if (auth()->user()->hasRole('CVO') || auth()->user()->hasRole('super_admin')) {
                 $payload['status'] = 'For Posting';
-            } elseif (auth()->user()->hasRole('CEE') || auth()->user()->hasRole('super_admin')) {
+            } elseif (auth()->user()->hasRole('CEE')) {
                 $payload['status'] = 'Posted';
             }
 

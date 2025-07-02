@@ -33,4 +33,9 @@ class OrderOfPayment extends Model
     {
         return $this->belongsTo(Owner::class);
     }
+
+    public function encoder()
+    {
+        return $this->belongsTo(User::class, 'encoded_by');
+    }
 }

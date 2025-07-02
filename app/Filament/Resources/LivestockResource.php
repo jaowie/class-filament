@@ -346,7 +346,7 @@ class LivestockResource extends Resource
                                         }
                                     }),
                                 ]),
-                                Forms\Components\Toggle::make('show_preview')
+                                // Forms\Components\Toggle::make('show_preview')
                             ])
                         ->columnSpanFull(),
     

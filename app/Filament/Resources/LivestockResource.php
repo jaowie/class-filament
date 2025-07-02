@@ -25,6 +25,7 @@ use Illuminate\Support\Facades\DB;
 use Filament\Forms\Components\Actions\Action;
 use Filament\Forms\Components\Group;
 use Filament\Tables\Actions\Action as ActionsAction;
+use Illuminate\Support\Facades\Log;
 
 class LivestockResource extends Resource
 {
@@ -34,7 +35,7 @@ class LivestockResource extends Resource
 
     public static function form(Form $form): Form
     {
-        $initialStep = request()->query('step', 1); // default to 1 if not set
+        $initialStep = request()->query('step', 1);
         return $form
             ->schema([
                 Placeholder::make('session_summary')
@@ -43,7 +44,7 @@ class LivestockResource extends Resource
                         $plateId = session('handler_plate_number_id');
 
                         if (!$handlerId || !$plateId) {
-                            return ''; // Don't show anything if session not set
+                            return '';
                         }
 
                         $handler = Handler::find($handlerId);
@@ -246,32 +247,30 @@ class LivestockResource extends Resource
                             </div>
                         ";
                 }),
-            Tables\Columns\TextColumn::make('type')
-                ->label('Type')
-                ->searchable(),
-            Tables\Columns\TextColumn::make('delivered_at')
-                ->label('Delivered At')
-                ->date()
-                ->sortable(),
-            Tables\Columns\TextColumn::make('created_at')
-                ->label('Date Created')
-                ->dateTime()
-                ->sortable(),
-            ])
-            ->actions([
-                Tables\Actions\Action::make('view_batch')
-                    ->label('View Batch')
-                    ->icon('heroicon-o-eye')
-                    ->url(fn ($record) => static::getUrl('view-livestock-batch', [
-                        'owner' => $record->owner->uuid,
-                        'batch' => $record->batch,
-                    ])),
+                Tables\Columns\TextColumn::make('type')
+                    ->label('Type')
+                    ->searchable(),
+                Tables\Columns\TextColumn::make('delivered_at')
+                    ->label('Delivered At')
+                    ->date()
+                    ->sortable(),
+                Tables\Columns\TextColumn::make('created_at')
+                    ->label('Date Created')
+                    ->dateTime()
+                    ->sortable(),
+                ])
+                ->actions([
+                    Tables\Actions\Action::make('view_batch')
+                        ->label('View Batch')
+                        ->icon('heroicon-o-eye')
+                        ->url(fn ($record) => static::getUrl('view-livestock-batch', [
+                            'owner' => $record->owner->uuid,
+                            'batch' => $record->batch,
+                ])),
 
                 Tables\Actions\Action::make('add_order_of_payment')
                     ->label('Add Order of Payment')
                     ->icon('heroicon-o-document-plus')
-                    ->modalHeading('Add Order of Payment')
-                    ->closeModalByClickingAway(false)
                     ->form([
                         Forms\Components\ToggleButtons::make('purpose')
                             ->label('Purpose')
@@ -282,80 +281,130 @@ class LivestockResource extends Resource
                             ->default('slaughter')
                             ->inline()
                             ->required(),
-
-                        Select::make('account_codes')
+                            
+                        Forms\Components\Select::make('account_codes')
                             ->label('Account Codes')
                             ->multiple()
                             ->searchable()
-                            ->options(
-                                AccountCode::all()->pluck('description', 'account_code')
-                            )
+                            ->options(AccountCode::all()->mapWithKeys(function ($item) {
+                                return [$item->account_code => "{$item->account_code} - {$item->description}"];
+                            }))
                             ->required(),
+                            
+                        Forms\Components\Textarea::make('remarks')
+                            ->label('Additional Remarks')
+                            ->columnSpanFull(),
 
-                        Forms\Components\Textarea::make('remarks'),
-                    ])
-                    ->action(function (array $data, $record, ActionsAction $action) {
-                        $livestock = Livestock::where('owner_id', $record->owner_id)
-                            ->where('batch', $record->batch)
-                            ->get()
-                            ->map(fn ($item) => [
-                                'id' => $item->id,
-                                'type' => $item->type,
-                                'batch' => $item->batch,
+                        Forms\Components\Section::make()
+                            ->schema([
+                                Forms\Components\Hidden::make('has_previewed'),
+                                Forms\Components\Hidden::make('preview_data'), 
+                                Forms\Components\Actions::make([
+                                    Forms\Components\Actions\Action::make('preview')
+                                        ->label('Preview Order')
+                                        ->color('gray')
+                                        ->icon('heroicon-o-eye')
+                                        ->action(function (Forms\Get $get, $record, Forms\Set $set) {
+                                            $accountCodes = collect($get('account_codes'))->mapWithKeys(function ($code) {
+                                            $accountCode = AccountCode::where('account_code', $code)->first();
+                                            return [
+                                                $code => [
+                                                    'code' => $code,
+                                                    'description' => $accountCode->description
+                                                ]
+                                            ];
+                                        })->toArray();
+
+                                        $payload = (object)[
+                                            'account_codes' => $accountCodes,
+                                            'owner_id' => $record->owner_id,
+                                            'purpose' => $get('purpose'),
+                                            'livestock' => Livestock::where('owner_id', $record->owner_id)
+                                                ->where('batch', $record->batch)
+                                                ->get()
+                                                ->map(fn ($item) => [
+                                                    'id' => $item->id,
+                                                    'type' => $item->type,
+                                                    'batch' => $item->batch,
+                                                ])
+                                                ->toArray(),
+                                            'remarks' => $get('remarks'),
+                                        ];
+
+                                        $OPReview = app(\App\Services\OrderOfPaymentService::class);
+                                        $previewData = $OPReview->reviewOP($payload);
+
+                                        if ($previewData) {
+                                            $set('preview_data', $previewData);
+                                            $set('show_preview', true);
+                                            $set('has_previewed', true);
+                                        } else {
+                                            Notification::make()
+                                                ->title('Failed to generate preview')
+                                                ->danger()
+                                                ->send();
+                                        }
+                                    }),
+                                ]),
+                                Forms\Components\Toggle::make('show_preview')
                             ])
-                            ->toArray();
+                        ->columnSpanFull(),
+    
+                        Forms\Components\Section::make('Order Preview')
+                            ->schema([
+                                Forms\Components\View::make('filament.components.op-preview')
+                                    ->viewData(function (Forms\Get $get) {
+                                        return [
+                                            'data' => $get('preview_data') 
+                                        ];
+                                    })
+                            ])
+                            ->hidden(fn (Forms\Get $get): bool => !$get('show_preview'))
+                            ->columnSpanFull(),
+                        ])
 
-                        $accountCodes = collect($data['account_codes'])->mapWithKeys(function ($code) {
+                ->action(function (array $data, $record, Tables\Actions\Action $action) {
+        
+                    if (!($data['has_previewed'] ?? false)) {
+                        Notification::make()
+                            ->title('Please generate preview first')
+                            ->warning()
+                            ->send();
+                        $action->halt();
+                        return;
+                    }
+
+                    $payload = (object)[
+                        'account_codes' => collect($data['account_codes'])->mapWithKeys(function ($code) {
                             $code = AccountCode::where('account_code', $code)->first();
                             return [$code->account_code => $code->description];
-                        })->toArray();
+                        })->toArray(),
+                        'owner_id' => $record->owner_id,
+                        'owner_name' => $data['preview_data']->owner_name,
+                        'owner_address' => $data['preview_data']->owner_address,
+                        'account_code_details' => $data['preview_data']->account_code_details,
+                        'purpose' => $data['purpose'],
+                        'amount' => $data['preview_data']->total_amount ?? 0,
+                        'livestock' => $data['preview_data']->livestock ?? [],
+                        'remarks' => $data['remarks'] ?? null,
+                    ];
+    
+                    $OPService = app(\App\Services\OrderOfPaymentService::class);
+                    $result = $OPService->postOP($payload);
 
-                        $payload = (object) [
-                            'account_codes' => $accountCodes,
-                            'owner_id' => $record->owner_id,
-                            'purpose' => $data['purpose'],
-                            'livestock' => $livestock,
-                            'remarks' => $data['remarks'] ?? null,
-                        ];
-
-                        $OPReview = app(\App\Services\OrderOfPaymentService::class);
-                        $reviewData = $OPReview->reviewOP($payload);
-
-                        $action
-                            ->modalContent(view('filament.components.op-preview', [
-                                'data' => $reviewData,
-                            ]))
-                            ->modalSubmitActionLabel('Confirm and Create Order of Payment')
-                            ->modalHeading('Order of Payment Preview')
-                            ->modalWidth('4xl')
-                            ->extraModalFooterActions([
-                                Action::make('cancel')
-                                    ->color('gray')
-                                    ->label('Cancel')
-                                    ->cancel(),
-                            ])
-                            ->action(function () use ($payload) {
-                                dd(1); // Debug — remove once working
-
-                                $OPReview = app(\App\Services\OrderOfPaymentService::class);
-                                $result = $OPReview->processOP($payload);
-
-                                if ($result) {
-                                    Notification::make()
-                                        ->title('Order of Payment created successfully')
-                                        ->success()
-                                        ->send();
-
-                                    return redirect()->route('filament.resources.order-of-payments.index');
-                                } else {
-                                    Notification::make()
-                                        ->title('Failed to create Order of Payment')
-                                        ->danger()
-                                        ->send();
-                                }
-                            });
-                    }),
-            ]);
+                    if ($result) {
+                        Notification::make()
+                            ->title('Order created successfully')
+                            ->success()
+                            ->send();
+                    } else {
+                        Notification::make()
+                            ->title('Failed to create order')
+                            ->danger()
+                            ->send();
+                    }
+                })
+        ]);
     }
     
     public static function getEloquentQuery(): Builder

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Http\Requests\PostOP;
 use App\Models\Livestock;
 use App\Models\OrderOfPayment;
 use App\Models\Owner;
@@ -10,6 +11,7 @@ use Illuminate\Support\Facades\Auth;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Filament\Notifications\Notification;
 use Filament\Support\Enums\Alignment;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Class OrderOfPaymentService.
@@ -43,53 +45,76 @@ class OrderOfPaymentService extends BaseService
         return $opNumber;
     }
 
-    public function generatePdf($payload)
+    public function postOP($payload)
     {
-        $payload = $this->reviewOP($payload);
-
-        $payload['op_no'] = $this->generateOPNumber();
-
-        // $pops_payment = $this->paymentService->createPayment((object) [
-        //     'oprefid' => $payload['op_no'],
-        //     'name' => $payload['owner_name'],
-        //     'address' => $payload['owner_address'],
-        //     'postedby' => auth()->user()->first_name.' '.auth()->user()->last_name,
-        //     'duedate' => now()->addMonth()->format('Y-m-d'),
-        //     'items' => array_map(function ($item) {
-        //                 return [
-        //                     'accountcode' => $item['code'],
-        //                     'amount' => number_format((float) $item['amount'], 2, '.', ''),
-        //                 ];
-        //             }, $payload['account_code_details'])           
-        // ]);
-
-        // if ($pops_payment != 'Success') {
-        //     return response()->json(['message' => config('services.pops_error')], 400);
-        // }
+        DB::beginTransaction();
         
-        $order_of_payment = $this->create($payload);
-        
-        $livestock_update_payload = [
-            'status' => 'OP Generated',
-            'order_of_payment_id' =>  $order_of_payment->id,
-        ];
+        try {
+            $payload = (array)$payload;
 
-        foreach ($payload->livestock as $livestock) {
-            $this->baseService
-            ->setModel(new Livestock())
-            ->updateById($livestock['id'], $livestock_update_payload);
+            $payload['op_no'] = $this->generateOPNumber();
+
+            $payload['status'] = 'Draft';
+            if (auth()->user()->hasRole('CVO')) {
+                $payload['status'] = 'For Posting';
+            } elseif (auth()->user()->hasRole('CEE') || auth()->user()->hasRole('super_admin')) {
+                $payload['status'] = 'Posted';
+            }
+
+            // FOR PROD/TESTING LIVE POPS POSTING
+            // $pops_payment = $this->paymentService->createPayment((object) [
+            //     'oprefid' => $payload['op_no'],
+            //     'name' => $payload['owner_name'],
+            //     'address' => $payload['owner_address'],
+            //     'postedby' => auth()->user()->first_name.' '.auth()->user()->last_name,
+            //     'duedate' => now()->addMonth()->format('Y-m-d'),
+            //     'items' => array_map(function ($item) {
+            //                 return [
+            //                     'accountcode' => $item['code'],
+            //                     'amount' => number_format((float) $item['amount'], 2, '.', ''),
+            //                 ];
+            //             }, $payload['account_code_details'])           
+            // ]);
+
+            // if ($pops_payment != 'Success') {
+            //     return response()->json(['message' => config('services.pops_error')], 400);
+            // }
+
+            $order_of_payment = $this->create($payload);
+
+            $livestock_update_payload = [
+                'status' => 'OP Encoded',
+                'order_of_payment_id' => $order_of_payment->id,
+            ];
+
+            foreach ($payload['livestock'] as $livestock) {
+                $this->baseService
+                    ->setModel(new Livestock())
+                    ->updateById($livestock['id'], $livestock_update_payload);
+            }
+
+            // $orderOfPayment = $this->generatePdfBlade($payload);
+
+            DB::commit();
+
+            // return $orderOfPayment;
+            return $order_of_payment;
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            // Notification::make()
+            //     ->title('Order of Payment Failed')
+            //     ->body($e->getMessage())
+            //     ->danger()
+            //     ->send();
         }
-
-        $orderOfPayment = $this->generatePdfBlade($payload);
-
-        return $orderOfPayment;
     }
 
     public function reviewOP($payload)
     {
         if ($this->paymentService->connect() === 'Failed.') {
             Notification::make()
-                ->alignment(Alignment::Center)
                 ->title('Error')
                 ->danger()
                 ->body('Connection failed.')
@@ -117,7 +142,6 @@ class OrderOfPaymentService extends BaseService
         }
 
         $owner = $this->baseService->setModel(new Owner())->findById($payload->owner_id);
-
 
         $owner_name = collect([
             $owner?->first_name,
@@ -160,34 +184,35 @@ class OrderOfPaymentService extends BaseService
         return $payload;
     }
 
-    public function create(object $payload)
+    public function create(array $payload)
     {
+    
         $orderOfPayment = new OrderOfPayment();
         $orderOfPayment->encoded_by = Auth::user()->id;
-        $orderOfPayment->order_of_payment_no = $payload->op_no;
-        $orderOfPayment->account_codes = json_encode(array_keys((array) $payload->account_codes));
-        $orderOfPayment->owner_id = $payload->owner_id;
-        $orderOfPayment->batch = $payload->livestock[0]['batch'];
-        $orderOfPayment->status = 'Awaiting payment';
-        $orderOfPayment->amount = $payload->total_amount;
-        $orderOfPayment->remarks = $payload->remarks;
-        $orderOfPayment->purpose = $payload->purpose;
+        $orderOfPayment->order_of_payment_no = $payload['op_no'];
+        $orderOfPayment->account_codes = json_encode(array_keys((array) $payload['account_codes']));
+        $orderOfPayment->owner_id = $payload['owner_id'];
+        $orderOfPayment->batch = $payload['livestock'][0]['batch'];
+        $orderOfPayment->status = $payload['status'];
+        $orderOfPayment->amount = $payload['amount'];
+        $orderOfPayment->remarks = $payload['remarks'];
+        $orderOfPayment->purpose = $payload['purpose'];
 
         $orderOfPayment->save();
         return $orderOfPayment->fresh();
     }
 
-    public function generatePdfBlade(object $payload)
+    public function generatePdfBlade(array $payload)
     {
         try {
             $pdf = Pdf::loadView('order-of-payment', [
-                'owner_name' => $payload->owner_name,
-                'owner_address' => $payload->owner_address,
-                'account_code_details' => $payload->account_code_details,
-                'total_amount' => $payload->total_amount,
-                'op_number' => $payload->op_no,
+                'owner_name' => $payload['owner_name'],
+                'owner_address' => $payload['owner_address'],
+                'account_code_details' => $payload['account_code_details'],
+                'total_amount' => $payload['total_amount'],
+                'op_number' => $payload['op_number'],
                 'op_sys' => 'CLASS',
-                'remarks' => $payload->remarks,
+                'remarks' => $payload['remarks'],
                 'valid_until_date' => now()->addDays(7)->format('F d, Y'),
             ]);
 

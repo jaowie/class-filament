@@ -21,6 +21,9 @@ use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\StartSession;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 use Filament\Support\View\Components\Modal;
+use App\Filament\Resources\LivestockResource\Widgets\DashboardLivestockStats;
+use App\Filament\Resources\LivestockResource\Widgets\LivestockDistribution;
+use App\Filament\Resources\LivestockResource\Widgets\TotalCollectionYearly;
 
 class AdminPanelProvider extends PanelProvider
 {
@@ -30,9 +33,10 @@ class AdminPanelProvider extends PanelProvider
         Notifications::alignment(Alignment::Center);
         return $panel
             ->brandName('CLASS')
-->brandLogo(fn () => view('filament.components.DC-logo'))
- ->brandLogoHeight('3rem')
+            ->brandLogo(fn () => view('filament.components.DC-logo'))
+            ->brandLogoHeight('3rem')
             ->default()
+            ->profile()
             ->id('admin')
             ->path('admin')
             ->login()
@@ -46,8 +50,9 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
             ->widgets([
-                Widgets\AccountWidget::class,
-                Widgets\FilamentInfoWidget::class,
+                DashboardLivestockStats::class,
+                LivestockDistribution::class,
+                TotalCollectionYearly::class
             ])
             ->middleware([
                 EncryptCookies::class,

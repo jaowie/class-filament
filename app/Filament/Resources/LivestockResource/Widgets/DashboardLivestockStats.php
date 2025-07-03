@@ -22,7 +22,7 @@ class DashboardLivestockStats extends BaseWidget
                 ->icon('heroicon-o-arrow-up'),
             Stat::make('Received Today', $dashboardService->getReceivedToday())
                 ->icon('heroicon-o-arrow-down'),
-            Stat::make('Total Collection', '₱ ' . $dashboardService->getTotalCollection())
+            Stat::make('Today\'s Total Collection', '₱ ' . $dashboardService->getTotalCollection())
                 ->icon('heroicon-o-building-library')
         ];
     }

@@ -12,6 +12,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Filament\Notifications\Notification;
 use Filament\Support\Enums\Alignment;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Class OrderOfPaymentService.
@@ -205,6 +206,7 @@ class OrderOfPaymentService extends BaseService
     public function generatePdfBlade(array $payload)
     {
         try {
+
             $pdf = Pdf::loadView('order-of-payment', [
                 'owner_name' => $payload['owner_name'],
                 'owner_address' => $payload['owner_address'],
@@ -216,9 +218,24 @@ class OrderOfPaymentService extends BaseService
                 'valid_until_date' => now()->addDays(7)->format('F d, Y'),
             ]);
 
-            return response($pdf->output(), 200)->header('Content-Type', 'application/pdf');
+            // Create filename from OP number
+            $filename = 'OP-' . $payload['op_number'] . '.pdf';
+            $storagePath = storage_path('app/public/' . $filename);
+
+            // Save to storage
+            $pdf->save($storagePath);
+
+            // Return response to display in browser
+            return response()->file($storagePath, [
+                'Content-Type' => 'application/pdf',
+                'Content-Disposition' => 'inline; filename="' . $filename . '"'
+            ]);
 
         } catch (\Throwable $e) {
+            Log::error('PDF Generation Error: ' . $e->getMessage(), [
+                'payload' => $payload,
+                'exception' => $e
+            ]);
             return null;
         }
     }

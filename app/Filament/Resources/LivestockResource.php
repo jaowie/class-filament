@@ -207,7 +207,11 @@ class LivestockResource extends Resource
             ->columns([
                 Tables\Columns\TextColumn::make('owner.full_name')
                     ->label('Owner')
-                    ->searchable(),
+                        ->searchable([
+                            'owners.first_name',
+                            'owners.middle_name',
+                            'owners.last_name'
+                        ]),
                 Tables\Columns\TextColumn::make('batch')
                     ->label('Batch')
                     ->searchable(),
